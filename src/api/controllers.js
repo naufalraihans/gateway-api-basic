@@ -45,15 +45,23 @@ const sendMessage = async (req, res) => {
   }
 };
 
-// GET /messages/:number — Baca pesan masuk dari nomor tertentu
+// GET /messages/:number?limit=10 — Baca pesan masuk dari nomor tertentu
 const getMessages = (req, res) => {
   const { number } = req.params;
   if (!number) {
     return res.status(400).json({ error: 'Nomor harus disertakan di URL.' });
   }
 
-  const messages = wa.getMessages(number);
-  res.json({ number, count: messages.length, messages });
+  const limit = parseInt(req.query.limit) || 10;
+  const allMessages = wa.getMessages(number);
+  const messages = allMessages.slice(-limit);
+
+  res.json({ 
+    number, 
+    totalAvailable: allMessages.length,
+    showing: messages.length, 
+    messages 
+  });
 };
 
 // GET /messages — Baca semua pesan masuk

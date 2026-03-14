@@ -104,18 +104,11 @@ async function connectToWhatsApp() {
       }
     });
 
-    // ---- INCOMING MESSAGES ----
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      // Hanya proses pesan baru yang masuk (bukan history sync)
-      if (type !== 'notify') return;
-
-      for (const msg of messages) {
-        // Skip pesan dari diri sendiri
-        if (msg.key.fromMe) continue;
-
-        // Ambil nomor pengirim (tanpa @s.whatsapp.net)
+    // ---- HELPER: simpan pesan ke inbox ----
+    function storeMessage(msg) {
+      try {
         const senderJid = msg.key.remoteJid;
-        if (!senderJid || senderJid.endsWith('@g.us')) continue; // Skip group messages
+        if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '');
 
@@ -125,27 +118,68 @@ async function connectToWhatsApp() {
           msg.message?.extendedTextMessage?.text ||
           msg.message?.imageMessage?.caption ||
           msg.message?.videoMessage?.caption ||
-          '[media/non-text message]';
+          msg.message?.buttonsResponseMessage?.selectedDisplayText ||
+          msg.message?.listResponseMessage?.title ||
+          msg.message?.templateButtonReplyMessage?.selectedDisplayText ||
+          null;
+
+        // Skip kalau gak ada content sama sekali
+        if (!text) return;
 
         const entry = {
           id: msg.key.id,
           from: senderNumber,
+          fromMe: msg.key.fromMe || false,
           text: text,
-          timestamp: msg.messageTimestamp,
+          timestamp: typeof msg.messageTimestamp === 'object' 
+            ? msg.messageTimestamp.low 
+            : Number(msg.messageTimestamp),
         };
 
-        // Simpan ke inbox
         if (!inboxMessages[senderNumber]) {
           inboxMessages[senderNumber] = [];
         }
+
+        // Cek duplikat berdasarkan message ID
+        const exists = inboxMessages[senderNumber].some(m => m.id === entry.id);
+        if (exists) return;
+
         inboxMessages[senderNumber].push(entry);
+
+        // Sort by timestamp (oldest first)
+        inboxMessages[senderNumber].sort((a, b) => a.timestamp - b.timestamp);
 
         // Limit supaya gak kebanyakan
         if (inboxMessages[senderNumber].length > MAX_MESSAGES_PER_NUMBER) {
-          inboxMessages[senderNumber].shift();
+          inboxMessages[senderNumber] = inboxMessages[senderNumber].slice(-MAX_MESSAGES_PER_NUMBER);
         }
+      } catch (err) {
+        // Silent fail — jangan crash gara-gara satu pesan
+      }
+    }
 
-        logger.info(`📩 Message from ${senderNumber}: ${text.substring(0, 50)}`);
+    // ---- HISTORY SYNC (pesan lama saat pertama connect) ----
+    sock.ev.on('messaging-history.set', ({ messages: historyMessages, isLatest }) => {
+      logger.info('History sync received: ' + historyMessages.length + ' messages');
+      for (const msg of historyMessages) {
+        storeMessage(msg);
+      }
+      const totalStored = Object.values(inboxMessages).reduce((sum, arr) => sum + arr.length, 0);
+      logger.info('Total messages in inbox: ' + totalStored);
+    });
+
+    // ---- REAL-TIME INCOMING MESSAGES ----
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      logger.info('messages.upsert — type: ' + type + ', count: ' + messages.length);
+      for (const msg of messages) {
+        storeMessage(msg);
+        
+        // Log real-time messages
+        if (type === 'notify' && !msg.key.fromMe) {
+          const sender = msg.key.remoteJid?.replace('@s.whatsapp.net', '');
+          const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
+          logger.info('New message from ' + sender + ': ' + text.substring(0, 50));
+        }
       }
     });
 
