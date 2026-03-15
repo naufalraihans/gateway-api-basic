@@ -1,42 +1,57 @@
 const wa = require('../whatsapp/client');
 
-// GET /session/start — Mulai session, return QR kalau belum login
+// POST /session/start — Mulai session dengan nomor telepon
 const startSession = async (req, res) => {
   try {
     if (wa.getConnectionStatus()) {
-      return res.json({ status: 'connected', message: 'WhatsApp sudah terkoneksi ✅' });
+      return res.json({ status: 'connected', message: 'WhatsApp sudah terkoneksi' });
     }
 
-    let qr = wa.getQrCode();
-    if (qr) return res.json({ qr });
+    // Ambil nomor dari body atau query
+    const phone = req.body.phone || req.query.phone;
+    if (!phone) {
+      return res.status(400).json({ 
+        error: 'Nomor telepon dibutuhkan',
+        example: 'POST /session/start dengan body: { "phone": "08123456789" }'
+      });
+    }
 
-    // Belum ada QR & belum connected → mulai koneksi
-    await wa.connectToWhatsApp();
+    // Mulai koneksi dan minta pairing code
+    await wa.connectToWhatsApp(phone);
 
-    // Tunggu sebentar biar QR sempat di-generate
-    await new Promise(r => setTimeout(r, 2500));
+    // Tunggu pairing code di-generate
+    await new Promise(r => setTimeout(r, 3500));
 
-    qr = wa.getQrCode();
-    if (qr) return res.json({ qr });
+    const code = wa.getPairingCode();
+    if (code) {
+      return res.json({ 
+        pairingCode: code,
+        message: 'Masukkan kode ini di WhatsApp HP kamu: Settings > Linked Devices > Link a Device > Link with phone number'
+      });
+    }
 
-    return res.json({ message: 'Session dimulai. Hit endpoint ini lagi untuk dapat QR code.' });
+    // Cek lagi apakah sudah connected (session lama masih valid)
+    if (wa.getConnectionStatus()) {
+      return res.json({ status: 'connected', message: 'WhatsApp sudah terkoneksi' });
+    }
+
+    return res.json({ message: 'Sedang memproses. Coba hit endpoint ini lagi.' });
   } catch (err) {
     res.status(500).json({ error: 'Gagal start session: ' + err.message });
   }
 };
 
-// GET /session/status — Cek apakah WA terkoneksi
+// GET /session/status
 const getStatus = (req, res) => {
   res.json({ connected: wa.getConnectionStatus() });
 };
 
-// POST /send — Kirim pesan
+// POST /send
 const sendMessage = async (req, res) => {
   const { number, message } = req.body;
   if (!number || !message) {
     return res.status(400).json({ error: 'Butuh "number" dan "message" di body.' });
   }
-
   try {
     await wa.sendMessage(number, message);
     res.json({ status: 'sent', to: number });
@@ -45,36 +60,28 @@ const sendMessage = async (req, res) => {
   }
 };
 
-// GET /messages/:number?limit=10 — Baca pesan masuk dari nomor tertentu
+// GET /messages/:number?limit=10
 const getMessages = (req, res) => {
   const { number } = req.params;
   if (!number) {
     return res.status(400).json({ error: 'Nomor harus disertakan di URL.' });
   }
-
   const limit = parseInt(req.query.limit) || 10;
   const allMessages = wa.getMessages(number);
   const messages = allMessages.slice(-limit);
-
-  res.json({ 
-    number, 
-    totalAvailable: allMessages.length,
-    showing: messages.length, 
-    messages 
-  });
+  res.json({ number, totalAvailable: allMessages.length, showing: messages.length, messages });
 };
 
-// GET /messages — Baca semua pesan masuk
+// GET /messages
 const getAllMessages = (req, res) => {
-  const all = wa.getAllMessages();
-  res.json(all);
+  res.json(wa.getAllMessages());
 };
 
-// POST /session/logout — Logout & hapus session
+// POST /session/logout
 const logoutSession = async (req, res) => {
   try {
     await wa.logout();
-    res.json({ status: 'logged_out', message: 'Session dihapus ✅' });
+    res.json({ status: 'logged_out', message: 'Session dihapus' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

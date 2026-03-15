@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 const fs = require('fs');
 const config = require('./config');
 const apiRoutes = require('./api/routes');
@@ -13,7 +12,6 @@ app.use(cors());
 app.use(express.json());
 
 // ==================== WEB DASHBOARD ====================
-// Halaman scan QR langsung dari browser — gak perlu copy-paste base64 lagi
 
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
@@ -44,12 +42,48 @@ app.get('/', (req, res) => {
     }
     h1 { font-size: 1.5rem; margin-bottom: 8px; color: #25D366; }
     p.sub { font-size: 0.85rem; color: #888; margin-bottom: 24px; }
-    #qr-img { border-radius: 12px; margin: 16px 0; background: white; padding: 12px; }
-    #status {
-      font-size: 1rem;
-      padding: 12px 24px;
+    input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #333;
       border-radius: 8px;
-      margin-top: 16px;
+      background: #111;
+      color: #fff;
+      font-size: 1rem;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    input:focus { border-color: #25D366; }
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: #25D366;
+      color: #000;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background: #1da851; }
+    button:disabled { background: #333; color: #666; cursor: not-allowed; }
+    .code-box {
+      background: #111;
+      border: 2px solid #25D366;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 16px 0;
+      font-size: 2rem;
+      font-weight: bold;
+      letter-spacing: 8px;
+      color: #25D366;
+      font-family: monospace;
+    }
+    #status {
+      font-size: 0.95rem;
+      padding: 10px 20px;
+      border-radius: 8px;
+      margin-top: 12px;
       display: inline-block;
     }
     .connected { background: #25D366; color: #000; font-weight: bold; }
@@ -57,7 +91,7 @@ app.get('/', (req, res) => {
     .endpoints {
       margin-top: 24px;
       text-align: left;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: #666;
       border-top: 1px solid #333;
       padding-top: 16px;
@@ -69,62 +103,87 @@ app.get('/', (req, res) => {
       border-radius: 4px;
     }
     .endpoints li { margin: 6px 0; list-style: none; }
+    .hint { font-size: 0.75rem; color: #666; margin-top: 8px; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>📱 WA Gateway</h1>
-    <p class="sub">Scan QR code di bawah dengan WhatsApp → Linked Devices</p>
+    <h1>WA Gateway</h1>
+    <p class="sub">Login WhatsApp via Pairing Code</p>
     
     <div id="content">
-      <div id="status" class="waiting">⏳ Loading...</div>
+      <div id="login-form">
+        <input type="text" id="phone" placeholder="Nomor HP (contoh: 08123456789)" />
+        <button id="btn" onclick="pair()">Login</button>
+        <p class="hint">Buka WhatsApp > Settings > Linked Devices > Link a Device > Link with phone number</p>
+      </div>
     </div>
 
     <ul class="endpoints">
-      <li>📤 Kirim: <code>POST /send</code></li>
-      <li>📩 Inbox: <code>GET /messages/628xxx</code></li>
-      <li>🔌 Status: <code>GET /session/status</code></li>
-      <li>🚪 Logout: <code>POST /session/logout</code></li>
+      <li>Kirim: <code>POST /send</code></li>
+      <li>Inbox: <code>GET /messages/628xxx</code></li>
+      <li>Status: <code>GET /session/status</code></li>
+      <li>Logout: <code>POST /session/logout</code></li>
     </ul>
   </div>
 
   <script>
-    async function poll() {
+    // Cek status saat load
+    async function checkStatus() {
       try {
-        // Cek status dulu
-        const statusRes = await fetch('/session/status');
-        const statusData = await statusRes.json();
-        
-        if (statusData.connected) {
+        const res = await fetch('/session/status');
+        const data = await res.json();
+        if (data.connected) {
           document.getElementById('content').innerHTML = 
-            '<div id="status" class="connected">✅ WhatsApp Terkoneksi!</div>';
-          return; // Stop polling
+            '<div id="status" class="connected">WhatsApp Terkoneksi!</div>';
+          return true;
         }
-
-        // Kalau belum connected, minta QR
-        const qrRes = await fetch('/session/start');
-        const qrData = await qrRes.json();
-
-        if (qrData.qr) {
-          document.getElementById('content').innerHTML = 
-            '<img id="qr-img" src="' + qrData.qr + '" width="256" height="256" />' +
-            '<div id="status" class="waiting">📷 Scan QR code ini</div>';
-        } else if (qrData.status === 'connected') {
-          document.getElementById('content').innerHTML = 
-            '<div id="status" class="connected">✅ WhatsApp Terkoneksi!</div>';
-          return;
-        } else {
-          document.getElementById('content').innerHTML = 
-            '<div id="status" class="waiting">⏳ Generating QR code...</div>';
-        }
-      } catch (e) {
-        document.getElementById('content').innerHTML = 
-          '<div id="status" class="waiting">❌ Server error</div>';
-      }
-      // Poll setiap 3 detik
-      setTimeout(poll, 3000);
+      } catch(e) {}
+      return false;
     }
-    poll();
+
+    async function pair() {
+      const phone = document.getElementById('phone').value.trim();
+      if (!phone) return alert('Masukkan nomor HP!');
+      
+      const btn = document.getElementById('btn');
+      btn.disabled = true;
+      btn.textContent = 'Memproses...';
+
+      try {
+        const res = await fetch('/session/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone })
+        });
+        const data = await res.json();
+
+        if (data.pairingCode) {
+          document.getElementById('content').innerHTML = 
+            '<p class="sub">Masukkan kode ini di WhatsApp HP kamu:</p>' +
+            '<div class="code-box">' + data.pairingCode + '</div>' +
+            '<div id="status" class="waiting">Menunggu konfirmasi dari HP...</div>';
+          
+          // Poll status sampai connected
+          const poll = setInterval(async () => {
+            if (await checkStatus()) clearInterval(poll);
+          }, 3000);
+        } else if (data.status === 'connected') {
+          document.getElementById('content').innerHTML = 
+            '<div id="status" class="connected">WhatsApp Terkoneksi!</div>';
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Login';
+          alert(data.message || data.error || 'Coba lagi');
+        }
+      } catch(e) {
+        btn.disabled = false;
+        btn.textContent = 'Login';
+        alert('Server error');
+      }
+    }
+
+    checkStatus();
   </script>
 </body>
 </html>`);
@@ -133,7 +192,6 @@ app.get('/', (req, res) => {
 // ==================== API ROUTES ====================
 app.use('/', apiRoutes);
 
-// Error handler
 app.use((err, req, res, next) => {
   logger.error(err.stack);
   res.status(500).json({ error: 'Internal server error' });
@@ -143,13 +201,13 @@ app.use((err, req, res, next) => {
 app.listen(config.port, async () => {
   logger.info('=================================');
   logger.info('Server running on port ' + config.port);
-  logger.info('Open http://localhost:' + config.port + ' to scan QR');
+  logger.info('Open http://localhost:' + config.port + ' to login');
   logger.info('=================================');
 
   if (fs.existsSync(config.sessionDir)) {
     logger.info('Session found, auto-connecting...');
     await wa.connectToWhatsApp();
   } else {
-    logger.info('No session found. Open browser to scan QR code.');
+    logger.info('No session. Open browser to login with phone number.');
   }
 });

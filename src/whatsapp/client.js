@@ -1,5 +1,4 @@
 const fs = require('fs');
-const qrcode = require('qrcode');
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -11,14 +10,13 @@ const config = require('../config');
 
 // ==================== STATE ====================
 let sock = null;
-let currentQr = null;
+let currentPairingCode = null;
 let isConnected = false;
 let isReconnecting = false;
+let pairingRequested = false;
 
-// Simpan pesan masuk di memory: { "628xxx": [ {id, from, text, timestamp}, ... ] }
+// Simpan pesan masuk di memory
 const inboxMessages = {};
-
-// Limit pesan per nomor supaya RAM gak jebol
 const MAX_MESSAGES_PER_NUMBER = 50;
 
 // ==================== HELPERS ====================
@@ -29,12 +27,8 @@ function ensureSessionDir() {
   }
 }
 
-/**
- * Format nomor WA: buang karakter non-digit, buang leading 0 kalau ada
- */
 function formatNumber(number) {
   let clean = number.replace(/\D/g, '');
-  // Kalau diawali 0, ganti jadi 62 (Indonesia)
   if (clean.startsWith('0')) {
     clean = '62' + clean.substring(1);
   }
@@ -43,19 +37,19 @@ function formatNumber(number) {
 
 // ==================== CORE ====================
 
-async function connectToWhatsApp() {
+async function connectToWhatsApp(phoneNumber) {
   ensureSessionDir();
 
   try {
     const { version } = await fetchLatestBaileysVersion();
-    logger.info(`Connecting with WA v${version.join('.')}`);
+    logger.info('Connecting with WA v' + version.join('.'));
 
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionDir);
 
     sock = makeWASocket({
       version,
       logger: logger.child({ module: 'baileys' }),
-      printQRInTerminal: true, // Juga print di terminal biar gampang
+      printQRInTerminal: false,
       auth: state,
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
@@ -65,25 +59,17 @@ async function connectToWhatsApp() {
 
     // ---- CONNECTION UPDATE ----
     sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        logger.info('QR Code ready — scan via /scan or terminal');
-        try {
-          currentQr = await qrcode.toDataURL(qr);
-        } catch (err) {
-          logger.error('QR generation failed', err);
-        }
-      }
+      const { connection, lastDisconnect } = update;
 
       if (connection === 'close') {
-        currentQr = null;
+        currentPairingCode = null;
         isConnected = false;
+        pairingRequested = false;
 
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-        logger.info(`Connection closed (code: ${statusCode}). ${shouldReconnect ? 'Reconnecting...' : 'Logged out.'}`);
+        logger.info('Connection closed (code: ' + statusCode + '). ' + (shouldReconnect ? 'Reconnecting...' : 'Logged out.'));
 
         if (shouldReconnect && !isReconnecting) {
           isReconnecting = true;
@@ -97,12 +83,31 @@ async function connectToWhatsApp() {
           }
         }
       } else if (connection === 'open') {
-        currentQr = null;
+        currentPairingCode = null;
         isConnected = true;
         isReconnecting = false;
-        logger.info('✅ WhatsApp connected!');
+        pairingRequested = false;
+        logger.info('WhatsApp connected!');
       }
     });
+
+    // ---- REQUEST PAIRING CODE ----
+    // Pairing code hanya bisa diminta setelah socket ready tapi sebelum authenticated
+    if (phoneNumber && !sock.authState.creds.registered) {
+      const cleanPhone = formatNumber(phoneNumber);
+      
+      // Tunggu socket siap
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      try {
+        const code = await sock.requestPairingCode(cleanPhone);
+        currentPairingCode = code;
+        pairingRequested = true;
+        logger.info('Pairing code for ' + cleanPhone + ': ' + code);
+      } catch (err) {
+        logger.error('Failed to request pairing code: ' + err.message);
+      }
+    }
 
     // ---- HELPER: simpan pesan ke inbox ----
     function storeMessage(msg) {
@@ -112,7 +117,6 @@ async function connectToWhatsApp() {
 
         const senderNumber = senderJid.replace('@s.whatsapp.net', '');
 
-        // Ambil text dari berbagai tipe pesan
         const text =
           msg.message?.conversation ||
           msg.message?.extendedTextMessage?.text ||
@@ -123,7 +127,6 @@ async function connectToWhatsApp() {
           msg.message?.templateButtonReplyMessage?.selectedDisplayText ||
           null;
 
-        // Skip kalau gak ada content sama sekali
         if (!text) return;
 
         const entry = {
@@ -131,8 +134,8 @@ async function connectToWhatsApp() {
           from: senderNumber,
           fromMe: msg.key.fromMe || false,
           text: text,
-          timestamp: typeof msg.messageTimestamp === 'object' 
-            ? msg.messageTimestamp.low 
+          timestamp: typeof msg.messageTimestamp === 'object'
+            ? msg.messageTimestamp.low
             : Number(msg.messageTimestamp),
         };
 
@@ -140,45 +143,38 @@ async function connectToWhatsApp() {
           inboxMessages[senderNumber] = [];
         }
 
-        // Cek duplikat berdasarkan message ID
         const exists = inboxMessages[senderNumber].some(m => m.id === entry.id);
         if (exists) return;
 
         inboxMessages[senderNumber].push(entry);
-
-        // Sort by timestamp (oldest first)
         inboxMessages[senderNumber].sort((a, b) => a.timestamp - b.timestamp);
 
-        // Limit supaya gak kebanyakan
         if (inboxMessages[senderNumber].length > MAX_MESSAGES_PER_NUMBER) {
           inboxMessages[senderNumber] = inboxMessages[senderNumber].slice(-MAX_MESSAGES_PER_NUMBER);
         }
       } catch (err) {
-        // Silent fail — jangan crash gara-gara satu pesan
+        // Silent fail
       }
     }
 
-    // ---- HISTORY SYNC (pesan lama saat pertama connect) ----
-    sock.ev.on('messaging-history.set', ({ messages: historyMessages, isLatest }) => {
-      logger.info('History sync received: ' + historyMessages.length + ' messages');
+    // ---- HISTORY SYNC ----
+    sock.ev.on('messaging-history.set', ({ messages: historyMessages }) => {
+      logger.info('History sync: ' + historyMessages.length + ' messages');
       for (const msg of historyMessages) {
         storeMessage(msg);
       }
       const totalStored = Object.values(inboxMessages).reduce((sum, arr) => sum + arr.length, 0);
-      logger.info('Total messages in inbox: ' + totalStored);
+      logger.info('Total in inbox: ' + totalStored);
     });
 
-    // ---- REAL-TIME INCOMING MESSAGES ----
+    // ---- REAL-TIME MESSAGES ----
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      logger.info('messages.upsert — type: ' + type + ', count: ' + messages.length);
       for (const msg of messages) {
         storeMessage(msg);
-        
-        // Log real-time messages
         if (type === 'notify' && !msg.key.fromMe) {
           const sender = msg.key.remoteJid?.replace('@s.whatsapp.net', '');
           const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
-          logger.info('New message from ' + sender + ': ' + text.substring(0, 50));
+          logger.info('New msg from ' + sender + ': ' + text.substring(0, 50));
         }
       }
     });
@@ -191,44 +187,31 @@ async function connectToWhatsApp() {
 
 // ==================== PUBLIC API ====================
 
-function getQrCode()          { return currentQr; }
-function getConnectionStatus() { return isConnected; }
+function getPairingCode()       { return currentPairingCode; }
+function getConnectionStatus()  { return isConnected; }
 
-/**
- * Kirim pesan ke nomor tertentu
- */
 async function sendMessage(number, message) {
   if (!isConnected || !sock) throw new Error('WhatsApp belum terkoneksi.');
-
   const clean = formatNumber(number);
-  const jid = `${clean}@s.whatsapp.net`;
-
+  const jid = clean + '@s.whatsapp.net';
   await sock.sendMessage(jid, { text: message });
 }
 
-/**
- * Ambil pesan masuk dari nomor tertentu
- */
 function getMessages(number) {
   const clean = formatNumber(number);
   return inboxMessages[clean] || [];
 }
 
-/**
- * Ambil semua pesan masuk (semua nomor)
- */
 function getAllMessages() {
   return inboxMessages;
 }
 
-/**
- * Logout & hapus session
- */
 async function logout() {
   if (sock) {
     await sock.logout();
     isConnected = false;
-    currentQr = null;
+    currentPairingCode = null;
+    pairingRequested = false;
   }
   if (fs.existsSync(config.sessionDir)) {
     fs.rmSync(config.sessionDir, { recursive: true, force: true });
@@ -237,7 +220,7 @@ async function logout() {
 
 module.exports = {
   connectToWhatsApp,
-  getQrCode,
+  getPairingCode,
   getConnectionStatus,
   sendMessage,
   getMessages,

@@ -1,38 +1,45 @@
-# 📱 WA Gateway API
+# WA Gateway API
 
 WhatsApp Gateway API gratis — kirim & baca pesan WA via HTTP request.  
-Pakai Baileys (WebSocket, bukan Puppeteer), ringan, bisa jalan di Railway free tier.
+Pakai Baileys (WebSocket), ringan, bisa jalan di Railway free tier.
+
+Login pakai **nomor telepon** (pairing code), bukan QR.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Copy env
 cp .env.example .env
-
-# 3. Jalankan
 npm start
 ```
 
-Buka **http://localhost:3000** di browser → scan QR code yang muncul pakai WhatsApp (Linked Devices) → selesai! ✅
+Buka **http://localhost:3000** → masukkan nomor HP → dapat pairing code → masukkan di WhatsApp HP (Linked Devices > Link with phone number) → selesai!
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
-### 1. Scan QR (Login)
-
-Buka browser ke `http://localhost:3000` — QR otomatis muncul, tinggal scan.
-
-Atau via API:
+### 1. Login (Pairing Code)
 
 ```
-GET /session/start
+POST /session/start
+Content-Type: application/json
+
+{ "phone": "08123456789" }
 ```
+
+Response:
+
+```json
+{
+  "pairingCode": "A1B2C3D4",
+  "message": "Masukkan kode ini di WhatsApp HP..."
+}
+```
+
+Atau buka `http://localhost:3000` di browser untuk login via web.
 
 ### 2. Cek Status
 
@@ -40,48 +47,22 @@ GET /session/start
 GET /session/status
 ```
 
-Response: `{ "connected": true }`
-
 ### 3. Kirim Pesan
 
 ```
 POST /send
 Content-Type: application/json
 
-{
-  "number": "628123456789",
-  "message": "Halo dari API!"
-}
+{ "number": "628123456789", "message": "Halo!" }
 ```
 
-Response: `{ "status": "sent", "to": "628123456789" }`
-
-> **Format nomor:** Pakai kode negara tanpa `+`. Contoh: `08123456789` → `628123456789`
-
-### 4. Baca Pesan Masuk (dari nomor tertentu)
+### 4. Baca Pesan (dari nomor tertentu)
 
 ```
-GET /messages/628123456789
+GET /messages/628123456789?limit=5
 ```
 
-Response:
-
-```json
-{
-  "number": "628123456789",
-  "count": 2,
-  "messages": [
-    {
-      "id": "abc123",
-      "from": "628123456789",
-      "text": "Halo, ini pesan masuk",
-      "timestamp": 1773526900
-    }
-  ]
-}
-```
-
-### 5. Baca Semua Pesan Masuk
+### 5. Baca Semua Pesan
 
 ```
 GET /messages
@@ -95,69 +76,37 @@ POST /session/logout
 
 ---
 
-## 🔗 Contoh Pakai curl
+## Contoh curl
 
 ```bash
+# Login
+curl -X POST http://localhost:3000/session/start -H "Content-Type: application/json" -d "{\"phone\": \"08123456789\"}"
+
 # Kirim pesan
-curl -X POST http://localhost:3000/send \
-  -H "Content-Type: application/json" \
-  -d '{"number": "628123456789", "message": "Hello!"}'
+curl -X POST http://localhost:3000/send -H "Content-Type: application/json" -d "{\"number\": \"628123456789\", \"message\": \"Hello!\"}"
 
-# Baca pesan dari nomor tertentu
-curl http://localhost:3000/messages/628123456789
+# Baca pesan
+curl http://localhost:3000/messages/628123456789?limit=3
 
-# Cek status koneksi
+# Cek status
 curl http://localhost:3000/session/status
 ```
 
 ---
 
-## 🤖 Pakai di n8n
-
-1. **HTTP Request Node** → Method: `POST` → URL: `http://YOUR_SERVER/send`
-2. Body (JSON): `{ "number": "628xxx", "message": "Automated msg" }`
-3. Untuk baca pesan: **HTTP Request Node** → Method: `GET` → URL: `http://YOUR_SERVER/messages/628xxx`
-
----
-
-## 🚂 Deploy ke Railway
+## Deploy ke Railway
 
 1. Push ke GitHub
-2. Buat project baru di [railway.app](https://railway.app)
-3. Connect repo GitHub
-4. Tambah **Volume** → mount path: `/app/storage/sessions`
-5. Set environment variable: `SESSION_DIR=/app/storage/sessions`
-6. Railway otomatis inject `PORT` — tidak perlu di-set manual
-7. Deploy!
-
-> **Penting:** Tanpa Volume, session hilang tiap restart dan harus scan QR ulang.
+2. Buat project di [railway.app](https://railway.app), connect repo
+3. Tambah **Volume** → mount path: `/app/storage/sessions`
+4. Set variable: `SESSION_DIR=/app/storage/sessions`
+5. Deploy — Railway otomatis inject `PORT`
 
 ---
 
-## 📁 Struktur Project
+## Catatan
 
-```
-wa-gateway/
-├── src/
-│   ├── server.js          # Entry point + web dashboard
-│   ├── config.js          # Environment config
-│   ├── whatsapp/
-│   │   └── client.js      # Baileys connection & message handling
-│   ├── api/
-│   │   ├── routes.js      # API routes
-│   │   └── controllers.js # Request handlers
-│   └── utils/
-│       └── logger.js      # Pino logger
-├── storage/sessions/      # Session files (auto-created)
-├── .env.example
-├── package.json
-└── README.md
-```
-
----
-
-## ⚠️ Catatan
-
-- Pesan masuk disimpan di **memory (RAM)** — kalau server restart, inbox kosong lagi. Ini by design supaya ringan.
-- Nomor otomatis di-format: `08123456789` → `628123456789`
-- Untuk personal use — tidak ada auth/proteksi API.
+- Login pakai **pairing code** (bukan QR)
+- Pesan masuk disimpan di **memory** — restart = inbox kosong
+- Format nomor: `08123456789` otomatis jadi `628123456789`
+- Untuk personal use, tanpa auth
