@@ -336,9 +336,13 @@ async function sendMessage(target, message) {
   // 3. Kalau belum nemu, asumsikan itu nomor telepon / text biasa
   if (!jid) {
     resolvedCleanPhone = formatNumber(target);
+    if (!resolvedCleanPhone) {
+      throw new Error(`Gagal mengirim: Nama kontak/target '${target}' tidak ditemukan di memori server, dan bukan format nomor telepon yang valid.`);
+    }
     jid = resolvedCleanPhone + '@s.whatsapp.net';
   }
 
+  logger.info(`[SENDING] target: '${target}' -> resolved jid: '${jid}'`);
   const result = await sock.sendMessage(jid, { text: message });
 
   // Tangkap LID mapping dari response (kalau kirim ke s.whatsapp.net)
