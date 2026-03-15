@@ -269,7 +269,14 @@ async function sendMessage(number, message) {
   if (!isConnected || !sock) throw new Error('WhatsApp belum terkoneksi.');
   const clean = formatNumber(number);
   const jid = clean + '@s.whatsapp.net';
-  await sock.sendMessage(jid, { text: message });
+  const result = await sock.sendMessage(jid, { text: message });
+
+  // Tangkap LID mapping dari response — ini kunci buat resolve LID ke nomor telepon
+  if (result?.key?.remoteJid?.endsWith('@lid')) {
+    const lid = result.key.remoteJid.replace('@lid', '');
+    lidToPhone[lid] = clean;
+    logger.info('LID mapped: ' + lid + ' -> ' + clean);
+  }
 }
 
 /**
