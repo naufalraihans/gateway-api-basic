@@ -41,25 +41,39 @@ Response:
 
 Atau buka `http://localhost:3000` di browser untuk login via web.
 
-### 2. Cek Status
+### 2. Cek List Chat (Conversations)
+
+Lihat semua percakapan yang masuk beserta **ID, Nomor HP (kalau ada), dan Nama (pushName)**.
 
 ```
-GET /session/status
+GET /conversations
 ```
 
 ### 3. Kirim Pesan
+
+Kirim pesan pakai nomor telepon, LID, atau **Nama Kontak**.
 
 ```
 POST /send
 Content-Type: application/json
 
-{ "number": "628123456789", "message": "Halo!" }
+{ "number": "Jaffa", "message": "Halo dari n8n!" }
+
+# ATAU pakai nomor:
+# { "number": "08123456789", "message": "Halo!" }
+
+# ATAU pakai LID:
+# { "number": "75836942188713", "message": "Halo!" }
 ```
 
-### 4. Baca Pesan (dari nomor tertentu)
+### 4. Baca Pesan (dari nomor atau nama)
+
+Parameter bisa berupa: Nomor Telepon, Nama Kontak (pushName), atau LID. Otomatis dicari!
 
 ```
-GET /messages/628123456789?limit=5
+GET /messages/Jaffa?limit=5
+# ATAU
+GET /messages/08123456789
 ```
 
 ### 5. Baca Semua Pesan
@@ -68,7 +82,13 @@ GET /messages/628123456789?limit=5
 GET /messages
 ```
 
-### 6. Logout
+### 6. Cek Status Server
+
+```
+GET /session/status
+```
+
+### 7. Logout
 
 ```
 POST /session/logout
@@ -82,14 +102,14 @@ POST /session/logout
 # Login
 curl -X POST http://localhost:3000/session/start -H "Content-Type: application/json" -d "{\"phone\": \"08123456789\"}"
 
-# Kirim pesan
-curl -X POST http://localhost:3000/send -H "Content-Type: application/json" -d "{\"number\": \"628123456789\", \"message\": \"Hello!\"}"
+# Lihat list chat & nama kontak
+curl http://localhost:3000/conversations
 
-# Baca pesan
-curl http://localhost:3000/messages/628123456789?limit=3
+# Kirim pesan pakai nama
+curl -X POST http://localhost:3000/send -H "Content-Type: application/json" -d "{\"number\": \"Jaffa\", \"message\": \"Pesan otomatis!\"}"
 
-# Cek status
-curl http://localhost:3000/session/status
+# Baca pesan dari nama tertentu
+curl "http://localhost:3000/messages/Jaffa?limit=3"
 ```
 
 ---
@@ -106,7 +126,8 @@ curl http://localhost:3000/session/status
 
 ## Catatan
 
-- Login pakai **pairing code** (bukan QR)
-- Pesan masuk disimpan di **memory** — restart = inbox kosong
-- Format nomor: `08123456789` otomatis jadi `628123456789`
-- Untuk personal use, tanpa auth
+- Login pakai **pairing code** (bukan QR).
+- Fitur pencarian kontak sangat fleksibel: bisa pakai Nama, Nomor HP, atau LID WhatsApp.
+- Jika nomor belum dikenali sebagai kontak (LID masih anonim), kirimlah satu pesan ke nomor tersebut via `/send`, maka ia akan ter-register permanen.
+- Pesan masuk disimpan di **memory** — restart = inbox kosong. Format payload _lightweight_ khusus untuk di-consume webhook / n8n.
+- Untuk personal use, tanpa auth.
