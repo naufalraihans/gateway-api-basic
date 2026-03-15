@@ -11,6 +11,7 @@ router.post('/session/logout', c.logoutSession);
 router.post('/send', c.sendMessage);
 
 // Baca pesan masuk
+router.get('/conversations',    c.getConversations); // list semua chat
 router.get('/messages',         c.getAllMessages);
 router.get('/messages/:number', c.getMessages);
 

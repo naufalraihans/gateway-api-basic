@@ -72,6 +72,11 @@ const getMessages = (req, res) => {
   res.json({ number, totalAvailable: allMessages.length, showing: messages.length, messages });
 };
 
+// GET /conversations — list semua chat yang ada
+const getConversations = (req, res) => {
+  res.json(wa.getConversations());
+};
+
 // GET /messages
 const getAllMessages = (req, res) => {
   res.json(wa.getAllMessages());
@@ -87,4 +92,4 @@ const logoutSession = async (req, res) => {
   }
 };
 
-module.exports = { startSession, getStatus, sendMessage, getMessages, getAllMessages, logoutSession };
+module.exports = { startSession, getStatus, sendMessage, getMessages, getConversations, getAllMessages, logoutSession };

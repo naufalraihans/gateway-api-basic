@@ -72,19 +72,13 @@ function storeMessage(msg) {
     let senderNumber;
 
     if (remoteJid.endsWith('@s.whatsapp.net')) {
-      // Format normal — langsung ambil nomor
       senderNumber = remoteJid.replace('@s.whatsapp.net', '');
     } else if (remoteJid.endsWith('@lid')) {
-      // Format LID — coba resolve ke nomor telepon
       const lid = remoteJid.replace('@lid', '');
-      if (lidToPhone[lid]) {
-        senderNumber = lidToPhone[lid];
-      } else {
-        // Belum bisa resolve, skip dulu (akan ke-resolve nanti dari contacts sync)
-        return;
-      }
+      // Coba resolve ke nomor telepon, kalau gagal pakai LID apa adanya
+      senderNumber = lidToPhone[lid] || lid;
     } else {
-      return; // Format lain, skip
+      return;
     }
 
     const text = extractText(msg);
@@ -278,9 +272,63 @@ async function sendMessage(number, message) {
   await sock.sendMessage(jid, { text: message });
 }
 
+/**
+ * Cari pesan dari nomor tertentu — otomatis cek semua key (phone + LID)
+ */
 function getMessages(number) {
   const clean = formatNumber(number);
-  return inboxMessages[clean] || [];
+  let messages = [];
+
+  // 1. Cari langsung pakai nomor
+  if (inboxMessages[clean]) {
+    messages = messages.concat(inboxMessages[clean]);
+  }
+
+  // 2. Cari di LID entries — cek apakah ada LID yang map ke nomor ini
+  for (const [lid, phone] of Object.entries(lidToPhone)) {
+    if (phone === clean && inboxMessages[lid]) {
+      messages = messages.concat(inboxMessages[lid]);
+    }
+  }
+
+  // 3. Cari di semua key yang matching (case: LID belum ter-resolve tapi user query pakai LID)
+  if (inboxMessages[clean] === undefined && messages.length === 0) {
+    // Mungkin user query pakai LID langsung
+    for (const [key, msgs] of Object.entries(inboxMessages)) {
+      if (key.includes(clean)) {
+        messages = messages.concat(msgs);
+      }
+    }
+  }
+
+  // Deduplicate & sort
+  const seen = new Set();
+  messages = messages.filter(m => {
+    if (seen.has(m.id)) return false;
+    seen.add(m.id);
+    return true;
+  }).sort((a, b) => a.timestamp - b.timestamp);
+
+  return messages;
+}
+
+/**
+ * List semua percakapan yang ada (key + jumlah pesan + preview)
+ */
+function getConversations() {
+  const convos = [];
+  for (const [key, msgs] of Object.entries(inboxMessages)) {
+    if (msgs.length === 0) continue;
+    const last = msgs[msgs.length - 1];
+    convos.push({
+      id: key,
+      resolvedPhone: lidToPhone[key] || null,
+      messageCount: msgs.length,
+      lastMessage: last.text.substring(0, 100),
+      lastTimestamp: last.timestamp,
+    });
+  }
+  return convos.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 }
 
 function getAllMessages() {
@@ -305,6 +353,7 @@ module.exports = {
   getConnectionStatus,
   sendMessage,
   getMessages,
+  getConversations,
   getAllMessages,
   logout,
 };
