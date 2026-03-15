@@ -320,8 +320,14 @@ async function sendMessage(target, message) {
   else {
     for (const [id, name] of Object.entries(idToName)) {
       if (name.toLowerCase().includes(cleanTarget)) {
-        // id bisa berupa phone number rata-rata
-        jid = id.includes('@') ? id : (id.length > 14 ? id + '@lid' : id + '@s.whatsapp.net');
+        // id di idToName adalah senderNumber (angka saja).
+        // Kalau panjangnya > 14 (rata-rata 15 digit) = LID. Kalau kurang = Phone.
+        if (id.length >= 14 && !id.startsWith('62')) {
+          jid = id + '@lid';
+        } else {
+          jid = id + '@s.whatsapp.net';
+          resolvedCleanPhone = id;
+        }
         break;
       }
     }
