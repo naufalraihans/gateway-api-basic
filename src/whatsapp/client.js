@@ -225,14 +225,30 @@ async function connectToWhatsApp(phoneNumber) {
         logger.info('Total in inbox: ' + total);
       }
 
-      // ---- REAL-TIME MESSAGES (ini yang penting buat responsif!) ----
+      // ---- REAL-TIME MESSAGES ----
       if (events['messages.upsert']) {
         const { messages, type } = events['messages.upsert'];
         for (const msg of messages) {
           storeMessage(msg);
           if (type === 'notify') {
-            const sender = msg.key.remoteJid?.replace('@s.whatsapp.net', '');
+            const remoteJid = msg.key.remoteJid;
             const text = extractText(msg) || '[media]';
+            
+            let sender = remoteJid?.replace('@s.whatsapp.net', '');
+            if (remoteJid?.endsWith('@lid')) {
+              const lid = remoteJid.replace('@lid', '');
+              sender = lidToPhone[lid] || lid;
+              
+              // AUTO-RESOLVE UNKNOWN LID:
+              // Jika pesannya dari LID yang belum ter-map, kirim ping balik (di background) 
+              // untuk memancing respons LID -> Phone dari Baileys
+              if (!lidToPhone[lid] && !msg.key.fromMe) {
+                logger.info('Auto-resolving unknown LID: ' + lid);
+                // Fire and forget — kirim presence aja gak usah kirim pesan
+                sock.presenceSubscribe(remoteJid).catch(() => {});
+              }
+            }
+            
             const dir = msg.key.fromMe ? 'SENT' : 'RECV';
             logger.info('[' + dir + '] ' + sender + ': ' + text.substring(0, 80));
           }
