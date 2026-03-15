@@ -58,15 +58,35 @@ function extractText(msg) {
   );
 }
 
+// Map LID ke nomor telepon (diisi dari contacts saat sync)
+const lidToPhone = {};
+
 /**
  * Simpan satu pesan ke inbox
  */
 function storeMessage(msg) {
   try {
-    const senderJid = msg.key.remoteJid;
-    if (!senderJid || senderJid.endsWith('@g.us') || senderJid === 'status@broadcast') return;
+    const remoteJid = msg.key.remoteJid;
+    if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') return;
 
-    const senderNumber = senderJid.replace('@s.whatsapp.net', '');
+    let senderNumber;
+
+    if (remoteJid.endsWith('@s.whatsapp.net')) {
+      // Format normal — langsung ambil nomor
+      senderNumber = remoteJid.replace('@s.whatsapp.net', '');
+    } else if (remoteJid.endsWith('@lid')) {
+      // Format LID — coba resolve ke nomor telepon
+      const lid = remoteJid.replace('@lid', '');
+      if (lidToPhone[lid]) {
+        senderNumber = lidToPhone[lid];
+      } else {
+        // Belum bisa resolve, skip dulu (akan ke-resolve nanti dari contacts sync)
+        return;
+      }
+    } else {
+      return; // Format lain, skip
+    }
+
     const text = extractText(msg);
     if (!text) return;
 
@@ -163,6 +183,41 @@ async function connectToWhatsApp(phoneNumber) {
       // ---- CREDS UPDATE ----
       if (events['creds.update']) {
         await saveCreds();
+      }
+
+      // ---- CONTACTS SYNC (buat mapping LID → nomor telepon) ----
+      if (events['contacts.upsert']) {
+        const contacts = events['contacts.upsert'];
+        for (const contact of contacts) {
+          // contact.id bisa berformat @s.whatsapp.net atau @lid
+          // contact.lid punya LID-nya
+          if (contact.lid) {
+            const lid = contact.lid.replace('@lid', '');
+            const phone = contact.id?.replace('@s.whatsapp.net', '');
+            if (phone && !phone.includes('@')) {
+              lidToPhone[lid] = phone;
+            }
+          }
+          // Kadang id-nya @lid dan notify punya nomor
+          if (contact.id?.endsWith('@lid') && contact.notify) {
+            // Cuma simpan nama, gak bisa resolve nomor dari sini
+          }
+        }
+        logger.info('Contacts synced. LID mappings: ' + Object.keys(lidToPhone).length);
+      }
+
+      // ---- CONTACTS UPDATE ----
+      if (events['contacts.update']) {
+        const contacts = events['contacts.update'];
+        for (const contact of contacts) {
+          if (contact.lid) {
+            const lid = contact.lid.replace('@lid', '');
+            const phone = contact.id?.replace('@s.whatsapp.net', '');
+            if (phone && !phone.includes('@')) {
+              lidToPhone[lid] = phone;
+            }
+          }
+        }
       }
 
       // ---- HISTORY SYNC ----
