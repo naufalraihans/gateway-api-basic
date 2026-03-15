@@ -82,6 +82,28 @@ const getAllMessages = (req, res) => {
   res.json(wa.getAllMessages());
 };
 
+// POST /resolve/:number — Resolve nomor ke LID (kirim "." ke nomor tsb)
+const resolveNumber = async (req, res) => {
+  const { number } = req.params;
+  if (!number) return res.status(400).json({ error: 'Nomor harus disertakan.' });
+  try {
+    const result = await wa.resolveNumber(number);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /map — Manual mapping LID ke nomor telepon
+const mapLid = (req, res) => {
+  const { lid, phone } = req.body;
+  if (!lid || !phone) {
+    return res.status(400).json({ error: 'Butuh "lid" dan "phone" di body.' });
+  }
+  const result = wa.mapLid(lid, phone);
+  res.json(result);
+};
+
 // POST /session/logout
 const logoutSession = async (req, res) => {
   try {
@@ -92,4 +114,4 @@ const logoutSession = async (req, res) => {
   }
 };
 
-module.exports = { startSession, getStatus, sendMessage, getMessages, getConversations, getAllMessages, logoutSession };
+module.exports = { startSession, getStatus, sendMessage, getMessages, getConversations, getAllMessages, resolveNumber, mapLid, logoutSession };

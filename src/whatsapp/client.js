@@ -342,6 +342,73 @@ function getAllMessages() {
   return inboxMessages;
 }
 
+/**
+ * Resolve nomor telepon ke LID — kirim read receipt dummy buat tangkap mapping
+ */
+async function resolveNumber(number) {
+  if (!isConnected || !sock) throw new Error('WhatsApp belum terkoneksi.');
+  const clean = formatNumber(number);
+
+  // Cek dulu apakah sudah ada mapping
+  for (const [lid, phone] of Object.entries(lidToPhone)) {
+    if (phone === clean) return { phone: clean, lid, status: 'already_mapped' };
+  }
+
+  // Kirim presence subscribe + typing indicator buat trigger LID resolution
+  const jid = clean + '@s.whatsapp.net';
+  try {
+    await sock.presenceSubscribe(jid);
+    await sock.sendPresenceUpdate('composing', jid);
+    await new Promise(r => setTimeout(r, 500));
+    await sock.sendPresenceUpdate('paused', jid);
+  } catch (e) {
+    // Ignore presence errors
+  }
+
+  // Kirim pesan "kosong" yg langsung di-delete (react ke pesan sendiri) — nope, terlalu complex.
+  // Cara paling reliable: kirim pesan asli tapi tiny
+  // Untuk sekarang, coba sendMessage internal
+  try {
+    const result = await sock.sendMessage(jid, { text: '.' });
+    if (result?.key?.remoteJid?.endsWith('@lid')) {
+      const lid = result.key.remoteJid.replace('@lid', '');
+      lidToPhone[lid] = clean;
+      logger.info('LID resolved: ' + lid + ' -> ' + clean);
+      return { phone: clean, lid, status: 'resolved' };
+    }
+  } catch (e) {
+    logger.error('Resolve failed: ' + e.message);
+  }
+
+  return { phone: clean, lid: null, status: 'failed' };
+}
+
+/**
+ * Manual mapping LID → nomor telepon
+ */
+function mapLid(lid, phone) {
+  const cleanPhone = formatNumber(phone);
+  const cleanLid = lid.replace('@lid', '');
+  lidToPhone[cleanLid] = cleanPhone;
+  logger.info('Manual LID map: ' + cleanLid + ' -> ' + cleanPhone);
+
+  // Pindahkan pesan dari key LID ke key nomor telepon
+  if (inboxMessages[cleanLid]) {
+    if (!inboxMessages[cleanPhone]) {
+      inboxMessages[cleanPhone] = [];
+    }
+    for (const msg of inboxMessages[cleanLid]) {
+      msg.from = cleanPhone;
+      const exists = inboxMessages[cleanPhone].some(m => m.id === msg.id);
+      if (!exists) inboxMessages[cleanPhone].push(msg);
+    }
+    inboxMessages[cleanPhone].sort((a, b) => a.timestamp - b.timestamp);
+    delete inboxMessages[cleanLid];
+  }
+
+  return { lid: cleanLid, phone: cleanPhone, status: 'mapped' };
+}
+
 async function logout() {
   if (sock) {
     await sock.logout();
@@ -359,6 +426,8 @@ module.exports = {
   getPairingCode,
   getConnectionStatus,
   sendMessage,
+  resolveNumber,
+  mapLid,
   getMessages,
   getConversations,
   getAllMessages,

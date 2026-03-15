@@ -11,8 +11,12 @@ router.post('/session/logout', c.logoutSession);
 router.post('/send', c.sendMessage);
 
 // Baca pesan masuk
-router.get('/conversations',    c.getConversations); // list semua chat
+router.get('/conversations',    c.getConversations);
 router.get('/messages',         c.getAllMessages);
 router.get('/messages/:number', c.getMessages);
+
+// LID Resolution
+router.post('/resolve/:number', c.resolveNumber); // auto-resolve (kirim "." ke nomor)
+router.post('/map',             c.mapLid);         // manual mapping LID → phone
 
 module.exports = router;
