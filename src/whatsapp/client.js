@@ -237,25 +237,29 @@ async function connectToWhatsApp(phoneNumber) {
             let sender = remoteJid?.replace('@s.whatsapp.net', '');
             if (remoteJid?.endsWith('@lid')) {
               const lid = remoteJid.replace('@lid', '');
+              
+              // Baileys v7 kadang nyisipin nomor asli di participant atau message
+              // Coba cari bocoran nomor HP di payload msg
+              let leakedPhone = null;
+              
+              if (msg.participant && msg.participant.includes('@s.whatsapp.net')) {
+                leakedPhone = msg.participant.replace('@s.whatsapp.net', '');
+              } else if (msg.key?.participant && msg.key.participant.includes('@s.whatsapp.net')) {
+                leakedPhone = msg.key.participant.replace('@s.whatsapp.net', '');
+              }
+
+              if (leakedPhone && !lidToPhone[lid]) {
+                lidToPhone[lid] = leakedPhone;
+                logger.info('Auto-resolved from payload: ' + lid + ' -> ' + leakedPhone);
+              }
+              
               sender = lidToPhone[lid] || lid;
               
-              // AUTO-RESOLVE UNKNOWN LID:
-              // WhatsApp butuh interaksi real supaya node ngembaliin JID asli.
-              // Kita kirim karakter kosong (Zero Width Space) terus delete (opsional) atau diemin aja.
               if (!lidToPhone[lid] && !msg.key.fromMe) {
-                logger.info('Auto-resolving unknown LID: ' + lid);
-                try {
-                  // Kirim pesan ZWSP (Zero Width Space)
-                  sock.sendMessage(remoteJid, { text: '\u200E' }).then(res => {
-                    // Kalau berhasil terkirim, response-nya biasanya bawa JID asli di log internal
-                    // Update mapping kalau ada return JID asli di sini
-                    if (res?.key?.remoteJid && res.key.remoteJid.includes('@s.whatsapp.net')) {
-                       const actualPhone = res.key.remoteJid.replace('@s.whatsapp.net', '');
-                       lidToPhone[lid] = actualPhone;
-                       logger.info('Auto-resolved ' + lid + ' -> ' + actualPhone);
-                    }
-                  }).catch(() => {});
-                } catch (e) {}
+                logger.info('Unknown LID received: ' + lid + '. Manual mapping required or send API message first.');
+                // Kita gausah balas ZWSP lagi karena bikin error decrypt di HP pengirim.
+                // Log payload untuk debugging supaya user bisa map manual
+                // logger.debug('Payload LID: ' + JSON.stringify(msg));
               }
             }
             
