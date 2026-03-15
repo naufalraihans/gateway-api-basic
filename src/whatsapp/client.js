@@ -240,12 +240,22 @@ async function connectToWhatsApp(phoneNumber) {
               sender = lidToPhone[lid] || lid;
               
               // AUTO-RESOLVE UNKNOWN LID:
-              // Jika pesannya dari LID yang belum ter-map, kirim ping balik (di background) 
-              // untuk memancing respons LID -> Phone dari Baileys
+              // WhatsApp butuh interaksi real supaya node ngembaliin JID asli.
+              // Kita kirim karakter kosong (Zero Width Space) terus delete (opsional) atau diemin aja.
               if (!lidToPhone[lid] && !msg.key.fromMe) {
                 logger.info('Auto-resolving unknown LID: ' + lid);
-                // Fire and forget — kirim presence aja gak usah kirim pesan
-                sock.presenceSubscribe(remoteJid).catch(() => {});
+                try {
+                  // Kirim pesan ZWSP (Zero Width Space)
+                  sock.sendMessage(remoteJid, { text: '\u200E' }).then(res => {
+                    // Kalau berhasil terkirim, response-nya biasanya bawa JID asli di log internal
+                    // Update mapping kalau ada return JID asli di sini
+                    if (res?.key?.remoteJid && res.key.remoteJid.includes('@s.whatsapp.net')) {
+                       const actualPhone = res.key.remoteJid.replace('@s.whatsapp.net', '');
+                       lidToPhone[lid] = actualPhone;
+                       logger.info('Auto-resolved ' + lid + ' -> ' + actualPhone);
+                    }
+                  }).catch(() => {});
+                } catch (e) {}
               }
             }
             
