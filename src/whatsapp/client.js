@@ -305,17 +305,41 @@ async function connectToWhatsApp(phoneNumber) {
 function getPairingCode()       { return currentPairingCode; }
 function getConnectionStatus()  { return isConnected; }
 
-async function sendMessage(number, message) {
+async function sendMessage(target, message) {
   if (!isConnected || !sock) throw new Error('WhatsApp belum terkoneksi.');
-  const clean = formatNumber(number);
-  const jid = clean + '@s.whatsapp.net';
+  
+  const cleanTarget = target.toLowerCase();
+  let jid = null;
+  let resolvedCleanPhone = null;
+
+  // 1. Cek apakah target adalah LID murni (angka panjang yang ada di record lidToPhone)
+  if (lidToPhone[target]) {
+    jid = target + '@lid';
+  } 
+  // 2. Cek apakah target adalah Nama (cari di idToName)
+  else {
+    for (const [id, name] of Object.entries(idToName)) {
+      if (name.toLowerCase().includes(cleanTarget)) {
+        // id bisa berupa phone number rata-rata
+        jid = id.includes('@') ? id : (id.length > 14 ? id + '@lid' : id + '@s.whatsapp.net');
+        break;
+      }
+    }
+  }
+
+  // 3. Kalau belum nemu, asumsikan itu nomor telepon / text biasa
+  if (!jid) {
+    resolvedCleanPhone = formatNumber(target);
+    jid = resolvedCleanPhone + '@s.whatsapp.net';
+  }
+
   const result = await sock.sendMessage(jid, { text: message });
 
-  // Tangkap LID mapping dari response — ini kunci buat resolve LID ke nomor telepon
-  if (result?.key?.remoteJid?.endsWith('@lid')) {
+  // Tangkap LID mapping dari response (kalau kirim ke s.whatsapp.net)
+  if (result?.key?.remoteJid?.endsWith('@lid') && resolvedCleanPhone) {
     const lid = result.key.remoteJid.replace('@lid', '');
-    lidToPhone[lid] = clean;
-    logger.info('LID mapped: ' + lid + ' -> ' + clean);
+    lidToPhone[lid] = resolvedCleanPhone;
+    logger.info('LID mapped: ' + lid + ' -> ' + resolvedCleanPhone);
   }
 }
 
