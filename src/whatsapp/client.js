@@ -60,6 +60,8 @@ function extractText(msg) {
 
 // Map LID ke nomor telepon (diisi dari contacts saat sync)
 const lidToPhone = {};
+// Map LID/Phone ke Nama (pushName)
+const idToName = {};
 
 /**
  * Simpan satu pesan ke inbox
@@ -70,15 +72,22 @@ function storeMessage(msg) {
     if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') return;
 
     let senderNumber;
+    let pushName = msg.pushName || 'Unknown';
 
     if (remoteJid.endsWith('@s.whatsapp.net')) {
       senderNumber = remoteJid.replace('@s.whatsapp.net', '');
     } else if (remoteJid.endsWith('@lid')) {
       const lid = remoteJid.replace('@lid', '');
-      // Coba resolve ke nomor telepon, kalau gagal pakai LID apa adanya
       senderNumber = lidToPhone[lid] || lid;
     } else {
       return;
+    }
+
+    // Simpan mapping nama
+    if (pushName !== 'Unknown') {
+      idToName[senderNumber] = pushName;
+    } else if (idToName[senderNumber]) {
+      pushName = idToName[senderNumber];
     }
 
     const text = extractText(msg);
@@ -87,6 +96,7 @@ function storeMessage(msg) {
     const entry = {
       id: msg.key.id,
       from: senderNumber,
+      pushName: pushName,
       fromMe: msg.key.fromMe || false,
       text: text,
       timestamp: typeof msg.messageTimestamp === 'object'
@@ -310,31 +320,27 @@ async function sendMessage(number, message) {
 }
 
 /**
- * Cari pesan dari nomor tertentu — otomatis cek semua key (phone + LID)
+ * Cari pesan dari nomor tertentu atau NAMA (pushName)
  */
-function getMessages(number) {
-  const clean = formatNumber(number);
+function getMessages(query) {
+  const cleanQuery = query.toLowerCase();
   let messages = [];
 
-  // 1. Cari langsung pakai nomor
-  if (inboxMessages[clean]) {
-    messages = messages.concat(inboxMessages[clean]);
-  }
+  // Cari di semua key
+  for (const [key, msgs] of Object.entries(inboxMessages)) {
+    let match = false;
+    
+    // 1. Cocok dengan Key (Phone number atau LID)
+    if (key.includes(cleanQuery)) match = true;
+    
+    // 2. Cocok dengan mapping Phone dari lidToPhone
+    if (!match && lidToPhone[key] && lidToPhone[key].includes(cleanQuery)) match = true;
+    
+    // 3. Cocok dengan pushName (Nama)
+    if (!match && idToName[key] && idToName[key].toLowerCase().includes(cleanQuery)) match = true;
 
-  // 2. Cari di LID entries — cek apakah ada LID yang map ke nomor ini
-  for (const [lid, phone] of Object.entries(lidToPhone)) {
-    if (phone === clean && inboxMessages[lid]) {
-      messages = messages.concat(inboxMessages[lid]);
-    }
-  }
-
-  // 3. Cari di semua key yang matching (case: LID belum ter-resolve tapi user query pakai LID)
-  if (inboxMessages[clean] === undefined && messages.length === 0) {
-    // Mungkin user query pakai LID langsung
-    for (const [key, msgs] of Object.entries(inboxMessages)) {
-      if (key.includes(clean)) {
-        messages = messages.concat(msgs);
-      }
+    if (match) {
+      messages = messages.concat(msgs);
     }
   }
 
@@ -350,7 +356,7 @@ function getMessages(number) {
 }
 
 /**
- * List semua percakapan yang ada (key + jumlah pesan + preview)
+ * List semua percakapan yang ada (key + nama + jumlah pesan + preview)
  */
 function getConversations() {
   const convos = [];
@@ -359,6 +365,7 @@ function getConversations() {
     const last = msgs[msgs.length - 1];
     convos.push({
       id: key,
+      pushName: idToName[key] || 'Unknown',
       resolvedPhone: lidToPhone[key] || null,
       messageCount: msgs.length,
       lastMessage: last.text.substring(0, 100),
